@@ -21,26 +21,28 @@ public static class PessoasActions
                 return TypedResults.UnprocessableEntity();
             }
 
-            await cache.EvictByTagAsync("query", default);
-
             var id = Guid.NewGuid();
             pessoa.Id = id;
             logger.Pessoa(pessoa);
             try
             {
+                if ((await db.Pessoas.CountAsync(p => p.Apelido == pessoa.Apelido)) > 0)
+                    return TypedResults.UnprocessableEntity();
                 await db.Pessoas.AddAsync(pessoa);
                 await db.SaveChangesAsync();
             }
             catch (PostgresException ex)
             {
-                if (ex.SqlState == "23505")
-                    return TypedResults.UnprocessableEntity();
+                if (ex.SqlState != "23505")
+                    logger.ErrorCreatingPessoa(ex.ToString());
+                return TypedResults.UnprocessableEntity();
             }
             catch (Exception ex)
             {
                 logger.ErrorCreatingPessoa(ex.ToString());
                 return TypedResults.UnprocessableEntity();
             }
+            await cache.EvictByTagAsync("query", default);
             return TypedResults.Created($"/pessoas/{id}");
         })
 #if DEBUG

@@ -1,5 +1,7 @@
 var builder = WebApplication.CreateBuilder(args);
-builder.Services.AddDbContext<RinhaContext>(options => options.UseNpgsql(builder.Configuration.GetConnectionString("Rinha")));
+var connectionString = builder.Configuration.GetConnectionString("Rinha");
+connectionString += ";Pooling=true;Minimum Pool Size=80;Maximum Pool Size=95";
+builder.Services.AddDbContext<RinhaContext>(options => options.UseNpgsql(connectionString));
 builder.Services.AddHealthChecks().AddDbContextCheck<RinhaContext>();
 builder.Services.AddOutputCache();
 
