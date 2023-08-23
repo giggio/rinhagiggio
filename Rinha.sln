@@ -7,9 +7,12 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Rinha", "Rinha\Rinha.csproj
 EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "Solution Items", "Solution Items", "{25CD30F6-D31B-4161-92D5-AA98F95FA00B}"
 	ProjectSection(SolutionItems) = preProject
+		.dockerignore = .dockerignore
 		.editorconfig = .editorconfig
 		.gitignore = .gitignore
+		docker-compose.yml = docker-compose.yml
 		global.json = global.json
+		LICENSE.txt = LICENSE.txt
 	EndProjectSection
 EndProject
 Global
@@ -25,5 +28,8 @@ Global
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {1CB4B3A0-7A6C-4614-A282-6C6967046FA2}
 	EndGlobalSection
 EndGlobal
