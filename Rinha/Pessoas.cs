@@ -26,38 +26,23 @@ public static class PessoasActions
             pessoa.Id = id;
             logger.Pessoa(pessoa);
             var db = provider.GetRequiredService<RinhaContext>();
-            IDbContextTransaction? trans = null;
             try
             {
-                trans = await db.Database.BeginTransactionAsync(token);
                 if (await db.PessoaWithApelidoExistsAsync(pessoa.Apelido, token))
-                {
-                    trans.Rollback();
                     return TypedResults.UnprocessableEntity();
-                }
                 db.Pessoas.Add(pessoa);
                 await db.SaveChangesAsync(token);
-                await trans.CommitAsync(token);
             }
             catch (PostgresException ex)
             {
-                if (trans is not null)
-                    await trans.RollbackAsync(token);
                 if (ex.SqlState != "23505")
                     logger.ErrorCreatingPessoa(ex.ToString());
                 return TypedResults.UnprocessableEntity();
             }
             catch (Exception ex)
             {
-                if (trans is not null)
-                    await trans.RollbackAsync(token);
                 logger.ErrorCreatingPessoa(ex.ToString());
                 return TypedResults.UnprocessableEntity();
-            }
-            finally
-            {
-                if (trans is not null)
-                    await trans.DisposeAsync();
             }
             var memoryCache = provider.GetRequiredService<IMemoryCache>();
             memoryCache.Set(id, pessoa, TimeSpan.FromSeconds(10));
