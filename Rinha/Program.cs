@@ -1,9 +1,15 @@
+using Microsoft.Extensions.Caching.Memory;
+
 var builder = WebApplication.CreateBuilder(args);
-var connectionString = builder.Configuration.GetConnectionString("Rinha");
-connectionString += ";Pooling=true;Minimum Pool Size=80;Maximum Pool Size=95";
-builder.Services.AddDbContext<RinhaContext>(options => options.UseNpgsql(connectionString));
-builder.Services.AddHealthChecks().AddDbContextCheck<RinhaContext>();
-builder.Services.AddOutputCache();
+builder.Services.AddLogging(opt => opt.AddSimpleConsole(options => options.TimestampFormat = "[HH:mm:ss:fff] "));
+builder.Services.AddDbContextPool<RinhaContext>(options => options.UseNpgsql(builder.Configuration.GetConnectionString("Rinha"),
+    o => o.ExecutionStrategy(d => new Microsoft.EntityFrameworkCore.Storage.NonRetryingExecutionStrategy(d)))
+#if !DEBUG
+    .EnableThreadSafetyChecks(false)
+#endif
+);
+builder.Services.AddHealthChecks();
+builder.Services.AddSingleton<IMemoryCache>(new MemoryCache(new MemoryCacheOptions { }));
 
 #if DEBUG
 builder.Services.AddEndpointsApiExplorer();
@@ -25,7 +31,6 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var app = builder.Build();
-app.UseOutputCache();
 
 #if DEBUG
 if (app.Environment.IsDevelopment())

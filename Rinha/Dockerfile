@@ -1,6 +1,6 @@
 FROM mcr.microsoft.com/dotnet/runtime-deps:8.0.0-preview.7-jammy as base
 WORKDIR /app
-ENV ASPNETCORE_URLS http://*:5000
+ENV ASPNETCORE_URLS http://*:9999
 RUN apt-get update && apt-get install curl -y
 ENTRYPOINT ["/app/Rinha"]
 

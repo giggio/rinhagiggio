@@ -1,5 +1,6 @@
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.AspNetCore.OutputCaching;
+using Microsoft.EntityFrameworkCore.Storage;
+using Microsoft.Extensions.Caching.Memory;
 using Npgsql;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
@@ -11,7 +12,7 @@ public static class PessoasActions
     public static WebApplication MapPessoas(this WebApplication app)
     {
         var logger = app.Logger;
-        app.MapPost("/pessoas", async Task<Results<Created, UnprocessableEntity>> (RinhaContext db, IOutputCacheStore cache, Pessoa pessoa) =>
+        app.MapPost("/pessoas", async Task<Results<Created, UnprocessableEntity>> (IServiceProvider provider, CancellationToken token, Pessoa pessoa) =>
         {
             if (pessoa.Nascimento == default
                 || string.IsNullOrWhiteSpace(pessoa.Apelido) || pessoa.Apelido.Length > 32
@@ -24,25 +25,42 @@ public static class PessoasActions
             var id = Guid.NewGuid();
             pessoa.Id = id;
             logger.Pessoa(pessoa);
+            var db = provider.GetRequiredService<RinhaContext>();
+            IDbContextTransaction? trans = null;
             try
             {
-                if ((await db.Pessoas.CountAsync(p => p.Apelido == pessoa.Apelido)) > 0)
+                trans = await db.Database.BeginTransactionAsync(token);
+                if (await db.PessoaWithApelidoExistsAsync(pessoa.Apelido, token))
+                {
+                    trans.Rollback();
                     return TypedResults.UnprocessableEntity();
-                await db.Pessoas.AddAsync(pessoa);
-                await db.SaveChangesAsync();
+                }
+                db.Pessoas.Add(pessoa);
+                await db.SaveChangesAsync(token);
+                await trans.CommitAsync(token);
             }
             catch (PostgresException ex)
             {
+                if (trans is not null)
+                    await trans.RollbackAsync(token);
                 if (ex.SqlState != "23505")
                     logger.ErrorCreatingPessoa(ex.ToString());
                 return TypedResults.UnprocessableEntity();
             }
             catch (Exception ex)
             {
+                if (trans is not null)
+                    await trans.RollbackAsync(token);
                 logger.ErrorCreatingPessoa(ex.ToString());
                 return TypedResults.UnprocessableEntity();
             }
-            await cache.EvictByTagAsync("query", default);
+            finally
+            {
+                if (trans is not null)
+                    await trans.DisposeAsync();
+            }
+            var memoryCache = provider.GetRequiredService<IMemoryCache>();
+            memoryCache.Set(id, pessoa, TimeSpan.FromSeconds(10));
             return TypedResults.Created($"/pessoas/{id}");
         })
 #if DEBUG
@@ -51,34 +69,32 @@ public static class PessoasActions
 #endif
         ;
 
-        app.MapGet("/pessoas/{id}", async Task<Results<Ok<Pessoa>, NotFound>> (RinhaContext db, Guid id) =>
+        app.MapGet("/pessoas/{id}", async Task<Results<Ok<Pessoa>, NotFound>> (RinhaContext db, IMemoryCache memoryCache, CancellationToken token, Guid id) =>
         {
-            var pessoa = await db.Pessoas.FirstOrDefaultAsync(p => p.Id == id);
-            return pessoa is null ? TypedResults.NotFound() : TypedResults.Ok(pessoa);
-        }).CacheOutput()
+            if (memoryCache.TryGetValue(id, out Pessoa? pessoa))
+                return TypedResults.Ok(pessoa);
+            var pessoaFromDb = await db.GetPessoaByIdAsync(id, token);
+            return pessoaFromDb is null ? TypedResults.NotFound() : TypedResults.Ok(pessoaFromDb);
+        })
 #if DEBUG
         .WithName("Obtem uma pessoa").WithOpenApi()
 #endif
         ;
 
-        app.MapGet("/pessoas", async Task<Results<Ok<List<Pessoa>>, BadRequest>> (RinhaContext db, string t) =>
+        app.MapGet("/pessoas", Results<Ok<IAsyncEnumerable<Pessoa>>, BadRequest> (IServiceProvider provider, string t) =>
         {
             if (string.IsNullOrWhiteSpace(t))
                 return TypedResults.BadRequest();
-            var pessoas = await db.Pessoas
-                .Where(p => p.Apelido.Contains(t) || p.Nome.Contains(t) || (p.Stack != null && p.Stack.Any(s => s.Contains(t))))
-                .OrderBy(p => p.Id)
-                .Take(50)
-                .ToListAsync();
-            logger.CountPessoas(pessoas.Count);
+            var db = provider.GetRequiredService<RinhaContext>();
+            var pessoas = db.FindPessoas(t);
             return TypedResults.Ok(pessoas);
-        }).CacheOutput(c => c.SetVaryByQuery("t").Tag("query"))
+        })
 #if DEBUG
         .WithName("Busca pessoas").WithOpenApi()
 #endif
         ;
 
-        app.MapGet("/contagem-pessoas", async (RinhaContext db) => await db.Pessoas.CountAsync())
+        app.MapGet("/contagem-pessoas", async (RinhaContext db, CancellationToken token) => await db.Pessoas.CountAsync(token))
 #if DEBUG
         .WithName("Conta pessoa").WithOpenApi()
 #endif
@@ -100,7 +116,30 @@ internal sealed partial class PessoaJsonContext : JsonSerializerContext { }
 
 internal sealed class RinhaContext : DbContext
 {
-    public RinhaContext(DbContextOptions options) : base(options) { }
+    public RinhaContext(DbContextOptions options) : base(options)
+    {
+        ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
+        ChangeTracker.AutoDetectChangesEnabled = false;
+    }
+
+    private static readonly Func<RinhaContext, Guid, CancellationToken, Task<Pessoa?>> getPessoaById =
+        EF.CompileAsyncQuery((RinhaContext context, Guid id, CancellationToken token) => context.Pessoas.FirstOrDefault(p => p.Id == id));
+
+    public Task<Pessoa?> GetPessoaByIdAsync(Guid id, CancellationToken token) => getPessoaById(this, id, token);
+
+    private static readonly Func<RinhaContext, string, CancellationToken, Task<bool>> pessoaWithApelidoExists =
+        EF.CompileAsyncQuery((RinhaContext context, string apelido, CancellationToken token) => context.Pessoas.Any(p => p.Apelido == apelido));
+
+    public Task<bool> PessoaWithApelidoExistsAsync(string apelido, CancellationToken token) => pessoaWithApelidoExists(this, apelido, token);
+
+    private static readonly Func<RinhaContext, string, IAsyncEnumerable<Pessoa>> findPessoas =
+        EF.CompileAsyncQuery((RinhaContext context, string term) =>
+            context.Pessoas
+            .Where(p => EF.Functions.Like(p.Apelido, term) || EF.Functions.Like(p.Nome, term) || p.Stack!.Any(s => EF.Functions.Like(s, term)))
+            .OrderBy(p => p.Id)
+            .Take(50));
+
+    public IAsyncEnumerable<Pessoa> FindPessoas(string term) => findPessoas(this, $"%{term}%");
 
     public required DbSet<Pessoa> Pessoas { get; set; }
 
