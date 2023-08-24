@@ -6,7 +6,7 @@ services:
     image: giggio/rinhabackend-2023-q3
     hostname: api1
     environment:
-      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha
+      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=300;Maximum Pool Size=450;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
     depends_on:
       db:
         condition: service_healthy
@@ -17,12 +17,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: '960MB'
+          cpus: '0.3'
+          memory: '384MB'
     networks:
       - app-network
     healthcheck:
-      test: curl -o /dev/null -fs --retry 0 --head http://localhost:5000/healthz || exit 1
+      test: curl -o /dev/null -fs --retry 0 --head http://localhost:9999/healthz || exit 1
       interval: 10s
       retries: 3
       start_period: 5s
@@ -32,7 +32,7 @@ services:
     image: giggio/rinhabackend-2023-q3
     hostname: api2
     environment:
-      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha
+      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=300;Maximum Pool Size=450;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
     depends_on:
       db:
         condition: service_healthy
@@ -43,12 +43,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.5'
-          memory: '960MB'
+          cpus: '0.3'
+          memory: '384MB'
     networks:
       - app-network
     healthcheck:
-      test: curl -o /dev/null -fs --retry 0 --head http://localhost:5000/healthz || exit 1
+      test: curl -o /dev/null -fs --retry 0 --head http://localhost:9999/healthz || exit 1
       interval: 10s
       retries: 3
       start_period: 5s
@@ -68,12 +68,12 @@ services:
     deploy:
       resources:
         limits:
-          cpus: '0.1'
+          cpus: '0.05'
           memory: '128MB'
 
   db:
     image: postgres:latest
-    command: 'postgres -c max_connections=200 -c shared_buffers=256MB -c synchronous_commit=off -c fsync=off -c full_page_writes=off'
+    command: 'postgres -c max_connections=1000 -c shared_buffers=512MB -c synchronous_commit=off -c fsync=off -c full_page_writes=off'
     hostname: db
     environment:
       - POSTGRES_PASSWORD=rinha
@@ -82,16 +82,16 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - ./ddl.sql:/docker-entrypoint-initdb.d/ddl.sql
+      - ./ddl.sql:/docker-entrypoint-initdb.d/ddl.sql:ro
     deploy:
       resources:
         limits:
-          cpus: '0.4'
-          memory: '1GB'
+          cpus: '0.85'
+          memory: '2176MB'
     networks:
       - app-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready"]
+      test: ["CMD", "pg_isready", "--username", "rinha"]
       interval: 5s
       timeout: 5s
       retries: 20
