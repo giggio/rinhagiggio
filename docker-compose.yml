@@ -7,6 +7,9 @@ services:
     hostname: api1
     environment:
       - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=300;Maximum Pool Size=450;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
+      - Cache__PeerAddress=http://api2:10000
+      #- Logging__LogLevel__Default=Debug
+      - QueueCapacity=100
     depends_on:
       db:
         condition: service_healthy
@@ -33,6 +36,9 @@ services:
     hostname: api2
     environment:
       - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=300;Maximum Pool Size=450;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
+      - Cache__PeerAddress=http://api1:10000
+      #- Logging__LogLevel__Default=Debug
+      - QueueCapacity=100
     depends_on:
       db:
         condition: service_healthy

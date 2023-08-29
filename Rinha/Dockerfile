@@ -7,7 +7,7 @@ ENTRYPOINT ["/app/Rinha"]
 FROM mcr.microsoft.com/dotnet/sdk:8.0.100-preview.7-jammy AS build
 WORKDIR /app
 COPY ./Rinha/Rinha.csproj ./Rinha/
-RUN cd Rinha && ls -lah && dotnet restore
+RUN cd Rinha && ls -lah && dotnet restore /property:Configuration=Release
 COPY . .
 RUN cd Rinha && dotnet publish -c Release -r linux-x64 -o out
 

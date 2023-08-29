@@ -1,7 +1,4 @@
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.EntityFrameworkCore.Storage;
-using Microsoft.Extensions.Caching.Memory;
-using Npgsql;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
 
@@ -12,7 +9,7 @@ public static class PessoasActions
     public static WebApplication MapPessoas(this WebApplication app)
     {
         var logger = app.Logger;
-        app.MapPost("/pessoas", async Task<Results<Created, UnprocessableEntity>> (IServiceProvider provider, CancellationToken token, Pessoa pessoa) =>
+        app.MapPost("/pessoas", async ValueTask<Results<Created, UnprocessableEntity>> (IServiceProvider provider, CancellationToken token, Pessoa pessoa) =>
         {
             if (pessoa.Nascimento == default
                 || string.IsNullOrWhiteSpace(pessoa.Apelido) || pessoa.Apelido.Length > 32
@@ -25,53 +22,38 @@ public static class PessoasActions
             var id = Guid.NewGuid();
             pessoa.Id = id;
             logger.Pessoa(pessoa);
-            var db = provider.GetRequiredService<RinhaContext>();
-            try
-            {
-                if (await db.PessoaWithApelidoExistsAsync(pessoa.Apelido, token))
-                    return TypedResults.UnprocessableEntity();
-                db.Pessoas.Add(pessoa);
-                await db.SaveChangesAsync(token);
-            }
-            catch (PostgresException ex)
-            {
-                if (ex.SqlState != "23505")
-                    logger.ErrorCreatingPessoa(ex.ToString());
+
+            if (CacheData.Exists(pessoa.Apelido))
                 return TypedResults.UnprocessableEntity();
-            }
-            catch (Exception ex)
-            {
-                logger.ErrorCreatingPessoa(ex.ToString());
-                return TypedResults.UnprocessableEntity();
-            }
-            var memoryCache = provider.GetRequiredService<IMemoryCache>();
-            memoryCache.Set(id, pessoa, TimeSpan.FromSeconds(10));
+            await CacheData.AddAsync(pessoa, token);
+            var cacheClient = provider.GetRequiredService<PeerCacheClient>();
+            await cacheClient.NotifyNewAsync(pessoa);
+            var queue = provider.GetRequiredService<IBackgroundTaskQueue>();
+            await queue.QueueBackgroundWorkItemAsync(pessoa, token);
             return TypedResults.Created($"/pessoas/{id}");
         })
 #if DEBUG
         .WithName("Cria pessoas").WithOpenApi()
-        // todo: remove id from swagger
 #endif
         ;
 
-        app.MapGet("/pessoas/{id}", async Task<Results<Ok<Pessoa>, NotFound>> (RinhaContext db, IMemoryCache memoryCache, CancellationToken token, Guid id) =>
+        app.MapGet("/pessoas/{id}", async ValueTask<Results<Ok<Pessoa>, NotFound>> (RinhaContext db, CancellationToken token, Guid id) =>
         {
-            if (memoryCache.TryGetValue(id, out Pessoa? pessoa))
-                return TypedResults.Ok(pessoa);
+            if (CacheData.pessoas.TryGetValue(id, out var pessoa))
+                return TypedResults.Ok(pessoa!);
             var pessoaFromDb = await db.GetPessoaByIdAsync(id, token);
-            return pessoaFromDb is null ? TypedResults.NotFound() : TypedResults.Ok(pessoaFromDb);
+            return pessoaFromDb is null ? TypedResults.NotFound() : TypedResults.Ok(pessoaFromDb!);
         })
 #if DEBUG
         .WithName("Obtem uma pessoa").WithOpenApi()
 #endif
         ;
 
-        app.MapGet("/pessoas", Results<Ok<IAsyncEnumerable<Pessoa>>, BadRequest> (IServiceProvider provider, string t) =>
+        app.MapGet("/pessoas", async ValueTask<Results<Ok<List<Pessoa>>, BadRequest>> (IServiceProvider provider, string? t, CancellationToken token) =>
         {
             if (string.IsNullOrWhiteSpace(t))
                 return TypedResults.BadRequest();
-            var db = provider.GetRequiredService<RinhaContext>();
-            var pessoas = db.FindPessoas(t);
+            var pessoas = await CacheData.WhereAsync(p => p.Apelido.Contains(t) || p.Nome.Contains(t) || (p.Stack is not null && p.Stack!.Any(s => s.Contains(t))), 50, token);
             return TypedResults.Ok(pessoas);
         })
 #if DEBUG
@@ -79,7 +61,16 @@ public static class PessoasActions
 #endif
         ;
 
-        app.MapGet("/contagem-pessoas", async (RinhaContext db, CancellationToken token) => await db.Pessoas.CountAsync(token))
+        app.MapGet("/contagem-pessoas", async (RinhaContext db, IBackgroundTaskQueue queue, CancellationToken token) =>
+        {
+            await queue.FlushAsync(token);
+            while (queue.QueuedItemsCount > 0)
+            {
+                logger.WaitingForQueueToEmpty(queue.QueuedItemsCount);
+                await Task.Delay(2_000, token);
+            }
+            await db.Pessoas.CountAsync(token);
+        })
 #if DEBUG
         .WithName("Conta pessoa").WithOpenApi()
 #endif
@@ -89,8 +80,11 @@ public static class PessoasActions
 }
 
 [Index(nameof(Apelido), IsUnique = true)]
-public record Pessoa([Required] string Apelido, string Nome, DateOnly Nascimento, List<string>? Stack)
+public record class Pessoa([Required] string Apelido, string Nome, DateOnly Nascimento, List<string>? Stack)
 {
+#if DEBUG
+    [Swashbuckle.AspNetCore.Annotations.SwaggerSchema(ReadOnly = true)]
+#endif
     public Guid Id { get; set; }
 }
 
@@ -101,11 +95,11 @@ internal sealed partial class PessoaJsonContext : JsonSerializerContext { }
 
 internal sealed class RinhaContext : DbContext
 {
-    public RinhaContext(DbContextOptions options) : base(options)
-    {
-        ChangeTracker.QueryTrackingBehavior = QueryTrackingBehavior.NoTracking;
-        ChangeTracker.AutoDetectChangesEnabled = false;
-    }
+    public RinhaContext(DbContextOptions options) : base(options) => ChangeTracker.AutoDetectChangesEnabled = false;
+
+    private static readonly Func<RinhaContext, IAsyncEnumerable<Pessoa>> getAll = EF.CompileAsyncQuery((RinhaContext context) => context.Pessoas);
+
+    public IAsyncEnumerable<Pessoa> GetAll() => getAll(this);
 
     private static readonly Func<RinhaContext, Guid, CancellationToken, Task<Pessoa?>> getPessoaById =
         EF.CompileAsyncQuery((RinhaContext context, Guid id, CancellationToken token) => context.Pessoas.FirstOrDefault(p => p.Id == id));

@@ -1,0 +1,16 @@
+syntax = "proto3";
+
+import "google/protobuf/empty.proto";
+
+service Cache {
+  rpc StorePessoa (PessoaRequest) returns (google.protobuf.Empty);
+}
+
+message PessoaRequest {
+    bytes id = 1;
+    string apelido = 2;
+    string nome = 3;
+    int32 nascimento = 4;
+    repeated string stack = 5;
+}
+

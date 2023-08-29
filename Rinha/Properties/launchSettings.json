@@ -14,9 +14,11 @@
       "dotnetRunMessages": true,
       "launchBrowser": true,
       "launchUrl": "swagger",
-      "applicationUrl": "http://*:9999",
+      "applicationUrl": "http://*:9997",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "Kestrel__Endpoints__Http__Url": "http://*:9997",
+        "Kestrel__Endpoints__gRPC__Url": "http://*:9998"
       }
     },
     "IIS Express": {
