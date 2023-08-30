@@ -24,7 +24,7 @@ public sealed class CacheService : Cache.CacheBase
     }
 }
 
-public class CacheOptions
+public sealed class CacheOptions
 {
     public Uri? PeerAddress { get; set; }
     public bool Leader { get; set; }
@@ -94,20 +94,32 @@ public static class CacheData
     public static readonly Dictionary<Guid, Pessoa> pessoas = new(initialCapacity);
     public static readonly HashSet<string> apelidos = new(initialCapacity);
     private static readonly AsyncReaderWriterLock asyncLock = new();
+    private static IBackgroundTaskQueue? queue;
 
-    public static async ValueTask AddAsync(Pessoa pessoa, CancellationToken token)
+    public static void SetQueue(IBackgroundTaskQueue queue) => CacheData.queue = queue;
+
+    public static async ValueTask AddAsync(Pessoa pessoa, CancellationToken cancellationToken)
     {
         Debug.Assert(pessoa != null);
         Debug.Assert(pessoa.Apelido != null);
-        using var _ = await asyncLock.WriterLockAsync(token);
-        if (pessoas.TryAdd(pessoa.Id, pessoa))
+        var success = false;
+        using (var _ = await asyncLock.WriterLockAsync(cancellationToken))
+        {
+            success = pessoas.TryAdd(pessoa.Id, pessoa);
+        }
+        if (success)
+        {
             apelidos.Add(pessoa.Apelido);
+            if (queue != null)
+                await queue.QueueBackgroundWorkItemAsync(pessoa, cancellationToken);
+        }
+
     }
 
-    public static async ValueTask AddRangeAsync(IAsyncEnumerable<Pessoa> pessoasNovas, CancellationToken token)
+    public static async ValueTask AddRangeAsync(IAsyncEnumerable<Pessoa> pessoasNovas, CancellationToken cancellationToken)
     {
-        using var _ = await asyncLock.WriterLockAsync(token);
-        await foreach (var pessoa in pessoasNovas)
+        using var _ = await asyncLock.WriterLockAsync(cancellationToken);
+        await foreach (var pessoa in pessoasNovas.WithCancellation(cancellationToken))
         {
             Debug.Assert(pessoa != null);
             pessoas.Add(pessoa.Id, pessoa);
@@ -116,17 +128,17 @@ public static class CacheData
 
     public static bool Exists(string apelido) => apelidos.Contains(apelido);
 
-    public static async ValueTask<bool> AnyAsync(Func<Pessoa, bool> predicate, CancellationToken token)
+    public static async ValueTask<List<Pessoa>> WhereAsync(Func<Pessoa, bool> predicate, int take, CancellationToken cancellationToken)
     {
-        using var _ = await asyncLock.ReaderLockAsync(token);
-        return pessoas.Values.Any(predicate);
-    }
-
-    public static async ValueTask<List<Pessoa>> WhereAsync(Func<Pessoa, bool> predicate, int take, CancellationToken token)
-    {
-        using var _ = await asyncLock.ReaderLockAsync(token);
+        using var _ = await asyncLock.ReaderLockAsync(cancellationToken);
         return pessoas.Values.Where(predicate)
             .Take(take)
             .ToList();
+    }
+
+    public static async ValueTask<int> CountAsync(CancellationToken cancellationToken)
+    {
+        using var _ = await asyncLock.ReaderLockAsync(cancellationToken);
+        return pessoas.Values.Count;
     }
 }

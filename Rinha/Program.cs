@@ -1,13 +1,16 @@
 using Microsoft.AspNetCore.Http.Extensions;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddLogging(opt => opt.AddSimpleConsole(options => options.TimestampFormat = "[HH:mm:ss:fff] "));
-builder.Services.AddPooledDbContextFactory<RinhaContext>(options =>
-    options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
-    .UseNpgsql(builder.Configuration.GetConnectionString("Rinha"),
-        o => o.ExecutionStrategy(d => new Microsoft.EntityFrameworkCore.Storage.NonRetryingExecutionStrategy(d)))
-        .EnableThreadSafetyChecks(!builder.Environment.IsProduction()));
-builder.Services.AddScoped(provider => provider.GetRequiredService<IDbContextFactory<RinhaContext>>().CreateDbContext());
+//builder.Services.AddPooledDbContextFactory<RinhaContext>(options =>
+//    options.UseQueryTrackingBehavior(QueryTrackingBehavior.NoTracking)
+//    .UseNpgsql(builder.Configuration.GetConnectionString("Rinha"),
+//        o => o.ExecutionStrategy(d => new Microsoft.EntityFrameworkCore.Storage.NonRetryingExecutionStrategy(d)))
+//        .EnableThreadSafetyChecks(!builder.Environment.IsProduction()));
+builder.Services.Configure<DbConfig>(dbConfig => dbConfig.ConnectionString = builder.Configuration.GetConnectionString("Rinha"));
+builder.Services.AddSingleton<Db>();
+//builder.Services.AddScoped(provider => provider.GetRequiredService<IDbContextFactory<RinhaContext>>().CreateDbContext());
 builder.Services.AddHealthChecks();
 builder.Services.AddSingleton<PeerCacheClient>();
 builder.Services.AddGrpc();
@@ -68,11 +71,15 @@ app.MapGet("/", () => Results.Redirect("/swagger")).ExcludeFromDescription();
 app.MapHealthChecks("/healthz");
 app.MapGrpcService<CacheService>();
 
-using (var context = app.Services.GetRequiredService<IDbContextFactory<RinhaContext>>().CreateDbContext())
+//using (var context = app.Services.GetRequiredService<IDbContextFactory<RinhaContext>>().CreateDbContext())
+//{
+//    await CacheData.AddRangeAsync(context.GetAll(), CancellationToken.None);
+//}
 {
-    await CacheData.AddRangeAsync(context.GetAll(), CancellationToken.None);
-}
-{
+    var db = app.Services.GetRequiredService<Db>();
+    await CacheData.AddRangeAsync(db.GetAllAsync(CancellationToken.None), CancellationToken.None);
+    if (app.Services.GetRequiredService<IOptions<CacheOptions>>().Value.Leader)
+        CacheData.SetQueue(app.Services.GetRequiredService<IBackgroundTaskQueue>());
     var configEndpoints = app.Configuration.GetSection("Kestrel:Endpoints");
     var httpEndpoint = configEndpoints?.GetValue<string>("Http:Url");
     var grpcEndpoint = configEndpoints?.GetValue<string>("gRPC:Url");

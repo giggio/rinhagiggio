@@ -44,19 +44,37 @@ public static partial class Logs
     [LoggerMessage(EventId = 14, Level = LogLevel.Debug, Message = "Writing {count} items to a collection in the queue.")]
     public static partial void AddingItemsToQueue(this ILogger logger, int count);
 
-    [LoggerMessage(EventId = 14, Level = LogLevel.Debug, Message = "Flushing queue with {count} items.")]
+    [LoggerMessage(EventId = 15, Level = LogLevel.Debug, Message = "Flushing queue with {count} items.")]
     public static partial void FlushingQueue(this ILogger logger, int count);
 
-    [LoggerMessage(EventId = 16, Level = LogLevel.Debug, Message = "Queue worker saving {count} items to DB.")]
+    [LoggerMessage(EventId = 17, Level = LogLevel.Trace, Message = "Queue worker saving {count} items to DB.")]
     public static partial void SavingToDb(this ILogger logger, int count);
 
-    [LoggerMessage(EventId = 17, Level = LogLevel.Trace, Message = "Queue was read synchronously ({quantityRead} items in collection). There were {count} collections in the queue.")]
+    [LoggerMessage(EventId = 18, Level = LogLevel.Trace, Message = "Queue was read synchronously ({quantityRead} items in collection). There were {count} collections in the queue.")]
     public static partial void QueueReadSynchronously(this ILogger logger, int quantityRead, int count);
 
-    [LoggerMessage(EventId = 18, Level = LogLevel.Trace, Message = "Queue was read asynchronously ({quantityRead} items in collection). There were {count} collections in the queue.")]
+    [LoggerMessage(EventId = 19, Level = LogLevel.Trace, Message = "Queue was read asynchronously ({quantityRead} items in collection). There were {count} collections in the queue.")]
     public static partial void QueueReadAsynchronously(this ILogger logger, int quantityRead, int count);
 
-    [LoggerMessage(EventId = 19, Level = LogLevel.Error, Message = "Got unhandled exception at url {url}:\n{exceptionMessage}.")]
+    [LoggerMessage(EventId = 20, Level = LogLevel.Error, Message = "Got unhandled exception at url {url}:\n{exceptionMessage}.")]
     public static partial void AppError(this ILogger logger, string url, string exceptionMessage);
+
+    [LoggerMessage(EventId = 21, Level = LogLevel.Error, Message = "When saving to Db expected {rowsExpected}, but got {rowsSaved}.")]
+    public static partial void DbWrongRowCountOnInsert(this ILogger logger, int rowsExpected, int rowsSaved);
+
+    [LoggerMessage(EventId = 22, Level = LogLevel.Trace, Message = "Inserted {rowsCount} rows into database.")]
+    public static partial void DbInserted(this ILogger logger, int rowsCount);
+
+    [LoggerMessage(EventId = 23, Level = LogLevel.Trace, Message = "Pool of {typeName} rented an item, has {itemsCount} before renting.")]
+    public static partial void PoolRentingItem(this ILogger logger, string typeName, int itemsCount);
+
+    [LoggerMessage(EventId = 24, Level = LogLevel.Trace, Message = "Pool of {typeName} returned an item, had {itemsCount} after return.")]
+    public static partial void PoolReturnedItem(this ILogger logger, string typeName, int itemsCount);
+
+    [LoggerMessage(EventId = 25, Level = LogLevel.Information, Message = "Pool of {typeName} returning all items, had {itemsCount}.")]
+    public static partial void PoolReturningAllItems(this ILogger logger, string typeName, int itemsCount);
+
+    [LoggerMessage(EventId = 26, Level = LogLevel.Information, Message = "Pool of {typeName} created with {itemsCount}.")]
+    public static partial void PoolCreated(this ILogger logger, string typeName, int itemsCount);
 }
 

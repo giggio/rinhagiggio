@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 
 namespace Rinha;
 
-public class DateOnlyJsonConverter : JsonConverter<DateOnly>
+public sealed class DateOnlyJsonConverter : JsonConverter<DateOnly>
 {
     private const string format = "yyyy-MM-dd";
 
