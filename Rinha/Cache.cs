@@ -11,23 +11,34 @@ namespace Rinha;
 
 public sealed class CacheService : Cache.CacheBase
 {
-    public CacheService(Db db) => this.db = db;
+    public CacheService(Db db, ILogger<CacheService> logger)
+    {
+        this.db = db;
+        this.logger = logger;
+    }
 
     private static readonly Empty empty = new();
     private static readonly DateOnly unixEpoch = new(1970, 1, 1);
     private readonly Db db;
+    private readonly ILogger logger;
 
     public override async Task<Empty> StorePessoa(PessoaRequest pessoaRequest, ServerCallContext context)
     {
-        await CacheData.AddAsync(new Pessoa(pessoaRequest.Apelido, pessoaRequest.Nome, unixEpoch.AddDays(pessoaRequest.Nascimento), new(pessoaRequest.Stack))
+        var pessoa = new Pessoa(pessoaRequest.Apelido, pessoaRequest.Nome, unixEpoch.AddDays(pessoaRequest.Nascimento), pessoaRequest.StackNull ? null : new(pessoaRequest.Stack))
         {
             Id = new Guid(pessoaRequest.Id.Memory.Span, false)
-        }, context.CancellationToken);
+        };
+        logger.CacheServerStorePessoa(pessoa.Id.ToString());
+        await CacheData.AddAsync(pessoa, context.CancellationToken);
         return empty;
     }
 
-    public override async Task<CountResponse> CountPessoas(Empty _, ServerCallContext context) =>
-        new CountResponse { Count = await db.GetCountAsync(context.CancellationToken) };
+    public override async Task<CountResponse> CountPessoas(Empty _, ServerCallContext context)
+    {
+        var count = await db.GetCountAsync(context.CancellationToken);
+        logger.CacheServerCount(count);
+        return new CountResponse { Count = count };
+    }
 }
 
 public sealed class CacheOptions
@@ -79,7 +90,10 @@ public sealed class PeerCacheClient : IDisposable
             Nome = pessoa.Nome,
             Nascimento = pessoa.Nascimento.DayNumber - unixEpoch.DayNumber
         };
-        request.Stack.AddRange(pessoa.Stack);
+        if (pessoa.Stack is null)
+            request.StackNull = true;
+        else
+            request.Stack.AddRange(pessoa.Stack);
         try
         {
             await client!.StorePessoaAsync(request, cancellationToken: cancellationToken);

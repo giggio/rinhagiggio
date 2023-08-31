@@ -79,6 +79,12 @@ public static partial class Logs
 
     [LoggerMessage(EventId = 27, Level = LogLevel.Information, Message = "Is leader: {isLeader}.")]
     public static partial void IsLeader(this ILogger logger, bool isLeader);
+
+    [LoggerMessage(EventId = 28, Level = LogLevel.Debug, Message = "Got GRPC message to store pessoa for id {id}.")]
+    public static partial void CacheServerStorePessoa(this ILogger logger, string id);
+
+    [LoggerMessage(EventId = 28, Level = LogLevel.Debug, Message = "Got GRPC message to get count for pessoas, answered with {count}.")]
+    public static partial void CacheServerCount(this ILogger logger, int count);
 }
 
 public sealed class AppLogs { }
