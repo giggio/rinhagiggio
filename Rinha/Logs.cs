@@ -35,8 +35,8 @@ public static partial class Logs
     [LoggerMessage(EventId = 11, Level = LogLevel.Error, Message = "Http endpoint and/or Grpc endpoint not defined.")]
     public static partial void ServerAddressesNotFound(this ILogger logger);
 
-    [LoggerMessage(EventId = 12, Level = LogLevel.Error, Message = "Could not connect to peer cache, got exception:\n{exceptionMessage}.")]
-    public static partial void CacheDidNotRespond(this ILogger logger, string exceptionMessage);
+    [LoggerMessage(EventId = 12, Level = LogLevel.Error, Message = "Could not connect to peer cache ({message}), got exception:\n{exceptionMessage}.")]
+    public static partial void CacheDidNotRespond(this ILogger logger, string message, string exceptionMessage);
 
     [LoggerMessage(EventId = 13, Level = LogLevel.Trace, Message = "Buffering new item.")]
     public static partial void BufferingNewItem(this ILogger logger);
@@ -76,5 +76,9 @@ public static partial class Logs
 
     [LoggerMessage(EventId = 26, Level = LogLevel.Information, Message = "Pool of {typeName} created with {itemsCount}.")]
     public static partial void PoolCreated(this ILogger logger, string typeName, int itemsCount);
+
+    [LoggerMessage(EventId = 27, Level = LogLevel.Information, Message = "Is leader: {isLeader}.")]
+    public static partial void IsLeader(this ILogger logger, bool isLeader);
 }
 
+public sealed class AppLogs { }

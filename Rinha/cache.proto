@@ -1,9 +1,8 @@
 syntax = "proto3";
 
-import "google/protobuf/empty.proto";
-
 service Cache {
-  rpc StorePessoa (PessoaRequest) returns (google.protobuf.Empty);
+  rpc StorePessoa (PessoaRequest) returns (Empty);
+  rpc CountPessoas (Empty) returns (CountResponse);
 }
 
 message PessoaRequest {
@@ -14,3 +13,8 @@ message PessoaRequest {
     repeated string stack = 5;
 }
 
+message CountResponse {
+    int32 count = 1;
+}
+
+message Empty {}

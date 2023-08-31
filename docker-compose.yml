@@ -8,6 +8,7 @@ services:
     environment:
       - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=10;Maximum Pool Size=50;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
       - Cache__PeerAddress=http://api2:10000
+      - Cache__Leader=true
       #- Logging__LogLevel__Default=Debug
     depends_on:
       db:
@@ -36,6 +37,7 @@ services:
     environment:
       - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=10;Maximum Pool Size=50;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
       - Cache__PeerAddress=http://api1:10000
+      - Cache__Leader=false
       #- Logging__LogLevel__Default=Debug
     depends_on:
       db:

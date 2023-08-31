@@ -68,18 +68,21 @@ app.MapGrpcService<CacheService>();
 {
     var db = app.Services.GetRequiredService<Db>();
     await CacheData.AddRangeAsync(db.GetAllAsync(CancellationToken.None), CancellationToken.None);
-    if (app.Services.GetRequiredService<IOptions<CacheOptions>>().Value.Leader)
+    var isLeader = app.Services.GetRequiredService<IOptions<CacheOptions>>().Value.Leader;
+    var logger = app.Services.GetRequiredService<ILogger<AppLogs>>();
+    logger.IsLeader(isLeader);
+    if (isLeader)
         CacheData.SetQueue(app.Services.GetRequiredService<IBackgroundTaskQueue>());
     var configEndpoints = app.Configuration.GetSection("Kestrel:Endpoints");
     var httpEndpoint = configEndpoints?.GetValue<string>("Http:Url");
     var grpcEndpoint = configEndpoints?.GetValue<string>("gRPC:Url");
     if (httpEndpoint != null && grpcEndpoint != null)
     {
-        app.Logger.ServerAddresses(httpEndpoint, grpcEndpoint);
+        logger.ServerAddresses(httpEndpoint, grpcEndpoint);
     }
     else
     {
-        app.Logger.ServerAddressesNotFound();
+        logger.ServerAddressesNotFound();
         throw new Exception("Missing server addresses.");
     }
 }

@@ -1,5 +1,4 @@
 using Google.Protobuf;
-using Google.Protobuf.WellKnownTypes;
 using Grpc.Core;
 using Grpc.Net.Client;
 using Microsoft.Extensions.Options;
@@ -12,8 +11,11 @@ namespace Rinha;
 
 public sealed class CacheService : Cache.CacheBase
 {
+    public CacheService(Db db) => this.db = db;
+
     private static readonly Empty empty = new();
     private static readonly DateOnly unixEpoch = new(1970, 1, 1);
+    private readonly Db db;
 
     public override async Task<Empty> StorePessoa(PessoaRequest pessoaRequest, ServerCallContext context)
     {
@@ -23,6 +25,9 @@ public sealed class CacheService : Cache.CacheBase
         }, context.CancellationToken);
         return empty;
     }
+
+    public override async Task<CountResponse> CountPessoas(Empty _, ServerCallContext context) =>
+        new CountResponse { Count = await db.GetCountAsync(context.CancellationToken) };
 }
 
 public sealed class CacheOptions
@@ -53,7 +58,6 @@ public sealed class PeerCacheClient : IDisposable
                 DisposeHttpClient = true
             });
             client = new Cache.CacheClient(channel);
-            //AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
             logger.CachePeer(peerAddress);
         }
         else
@@ -64,9 +68,9 @@ public sealed class PeerCacheClient : IDisposable
         this.logger = logger;
     }
 
-    public ValueTask NotifyNewAsync(Pessoa pessoa) => client is not null ? NotifyNewImplAsync(pessoa) : ValueTask.CompletedTask;
+    public ValueTask NotifyNewAsync(Pessoa pessoa, CancellationToken cancellationToken) => client is not null ? NotifyNewImplAsync(pessoa, cancellationToken) : ValueTask.CompletedTask;
 
-    private async ValueTask NotifyNewImplAsync(Pessoa pessoa)
+    private async ValueTask NotifyNewImplAsync(Pessoa pessoa, CancellationToken cancellationToken)
     {
         PessoaRequest request = new()
         {
@@ -78,11 +82,24 @@ public sealed class PeerCacheClient : IDisposable
         request.Stack.AddRange(pessoa.Stack);
         try
         {
-            await client!.StorePessoaAsync(request);
+            await client!.StorePessoaAsync(request, cancellationToken: cancellationToken);
         }
         catch (Exception ex)
         {
-            logger.CacheDidNotRespond(ex.ToString());
+            logger.CacheDidNotRespond("StorePessoa", ex.ToString());
+        }
+    }
+
+    public async ValueTask<int> CountAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            return (await client!.CountPessoasAsync(new(), cancellationToken: cancellationToken)).Count;
+        }
+        catch (Exception ex)
+        {
+            logger.CacheDidNotRespond("Count", ex.ToString());
+            throw;
         }
     }
 
@@ -203,7 +220,7 @@ public static class CacheData
             .Concat(pessoas.Last().Take(last % bufferSize).Where(predicate)).Take(take).ToList();
     }
 
-    public static int Count() => numberOfPessoasCreated - 1;
+    public static int Count() => numberOfPessoasCreated;
 
     private sealed class GuidEqualityComparer : IEqualityComparer<Guid> // adapted from https://stackoverflow.com/a/31580481/2723305, but using Span so we don't allocate
     {

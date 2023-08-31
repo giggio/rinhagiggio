@@ -97,7 +97,7 @@ public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
     private const int minPowerOfItems = 4;
     private int powerOfItens = minPowerOfItems;
     private int numberOfItems;
-    private readonly NoBlockingList<Pessoa> pessoas = new();
+    private readonly NoBlockingList<Pessoa> pessoasBuffer = new();
     private readonly ILogger<NewPessoasBackgroundTaskQueue> logger;
 
     public NewPessoasBackgroundTaskQueue(ILogger<NewPessoasBackgroundTaskQueue> logger)
@@ -140,7 +140,7 @@ public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
     {
         Debug.Assert(pessoa != null);
         logger.BufferingNewItem();
-        if (pessoas.AddAndTryGet(pessoa, numberOfItems, out var pessoasToQueue))
+        if (pessoasBuffer.AddAndTryGet(pessoa, numberOfItems, out var pessoasToQueue))
         {
             logger.AddingItemsToQueue(pessoasToQueue.Length);
             Debug.Assert(pessoasToQueue.All(p => p is not null));
@@ -151,7 +151,7 @@ public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
     public async ValueTask<bool> FlushAsync(CancellationToken cancellationToken)
     {
 
-        if (pessoas.TryGetAll(out var pessoasToQueue))
+        if (pessoasBuffer.TryGetAll(out var pessoasToQueue))
         {
             logger.FlushingQueue(pessoasToQueue.Length);
             Debug.Assert(pessoasToQueue.All(p => p is not null));

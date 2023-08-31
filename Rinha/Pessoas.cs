@@ -1,6 +1,7 @@
 using Microsoft.AspNetCore.Http.HttpResults;
 using Microsoft.Extensions.Options;
 using System.ComponentModel.DataAnnotations;
+using System.Diagnostics;
 using System.Text.Json.Serialization;
 
 namespace Rinha;
@@ -27,7 +28,7 @@ public static class PessoasActions
             if (CacheData.Exists(pessoa.Apelido))
                 return TypedResults.UnprocessableEntity();
             var cacheClient = provider.GetRequiredService<PeerCacheClient>();
-            await cacheClient.NotifyNewAsync(pessoa);
+            await cacheClient.NotifyNewAsync(pessoa, cancellationToken);
             await CacheData.AddAsync(pessoa, cancellationToken);
             return TypedResults.Created($"/pessoas/{id}");
         })
@@ -58,7 +59,7 @@ public static class PessoasActions
 #endif
         ;
 
-        app.MapGet("/contagem-pessoas", async (IOptions<CacheOptions> cacheOptions, IBackgroundTaskQueue queue, CancellationToken cancellationToken) =>
+        app.MapGet("/contagem-pessoas", async (IOptions<CacheOptions> cacheOptions, IBackgroundTaskQueue queue, PeerCacheClient cacheClient, Db db, CancellationToken cancellationToken) =>
         {
             var cancellationTokenSource = new CancellationTokenSource(10_000);
             if (cacheOptions.Value.Leader)
@@ -66,8 +67,22 @@ public static class PessoasActions
                 try
                 { await queue.FlushAsyncAndWaitToDrainAsync(cancellationTokenSource.Token); }
                 catch { }
+                var countFromDb = await db.GetCountAsync(cancellationToken);
+#if DEBUG
+                var cachedCount = CacheData.Count();
+                Debug.Assert(cachedCount == countFromDb, $"Count from db: {countFromDb} != CachedCount: {cachedCount}");
+#endif
+                return countFromDb;
             }
-            return CacheData.Count();
+            else
+            {
+                var countFromPeer = await cacheClient.CountAsync(cancellationToken);
+#if DEBUG
+                var cachedCount = CacheData.Count();
+                Debug.Assert(cachedCount == countFromPeer, $"Count from peer: {countFromPeer} != CachedCount: {cachedCount}");
+#endif
+                return countFromPeer;
+            }
         })
 #if DEBUG
         .WithName("Conta pessoa").WithOpenApi()

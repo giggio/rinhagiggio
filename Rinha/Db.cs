@@ -141,6 +141,18 @@ public sealed class Db : IAsyncDisposable
         command.Connection = null;
     }
 
+    public async ValueTask<int> GetCountAsync(CancellationToken cancellationToken)
+    {
+        ThrowIfDisposed();
+        await using var connectionsPoolItem = await connectionPool.RentAsync(cancellationToken);
+        var connection = connectionsPoolItem.Value;
+        using var command = connection.CreateCommand();
+        command.CommandText = """SELECT Count("Id") FROM "Pessoas" """;
+        var count = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+        command.Connection = null;
+        return count;
+    }
+
     public async ValueTask DisposeAsync()
     {
         if (disposed)
