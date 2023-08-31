@@ -36,18 +36,21 @@ public static class PessoasActions
 #endif
         ;
 
-        app.MapGet("/pessoas/{id}", Results<Ok<Pessoa>, NotFound> (Guid id) =>
-            CacheData.pessoas.TryGetValue(id, out var pessoa) ? TypedResults.Ok(pessoa!) : TypedResults.NotFound())
+        app.MapGet("/pessoas/{id}", async ValueTask<Results<Ok<Pessoa>, NotFound>> (Guid id, CancellationToken cancellationToken) =>
+        {
+            var pessoa = await CacheData.GetPessoaAsync(id, cancellationToken);
+            return pessoa is not null ? TypedResults.Ok(pessoa) : TypedResults.NotFound();
+        })
 #if DEBUG
         .WithName("Obtem uma pessoa").WithOpenApi()
 #endif
         ;
 
-        app.MapGet("/pessoas", async ValueTask<Results<Ok<List<Pessoa>>, BadRequest>> (string? t, CancellationToken cancellationToken) =>
+        app.MapGet("/pessoas", Results<Ok<List<Pessoa>>, BadRequest> (string? t, CancellationToken cancellationToken) =>
         {
             if (string.IsNullOrWhiteSpace(t))
                 return TypedResults.BadRequest();
-            var pessoas = await CacheData.WhereAsync(p => p.Apelido.Contains(t) || p.Nome.Contains(t) || (p.Stack is not null && p.Stack.Any(s => s.Contains(t))), 50, cancellationToken);
+            var pessoas = CacheData.Where(p => p.Apelido.Contains(t) || p.Nome.Contains(t) || (p.Stack is not null && p.Stack.Any(s => s.Contains(t))), 50);
             return TypedResults.Ok(pessoas);
         })
 #if DEBUG
@@ -64,7 +67,7 @@ public static class PessoasActions
                 { await queue.FlushAsyncAndWaitToDrainAsync(cancellationTokenSource.Token); }
                 catch { }
             }
-            return await CacheData.CountAsync(cancellationToken);
+            return CacheData.Count();
         })
 #if DEBUG
         .WithName("Conta pessoa").WithOpenApi()
@@ -87,25 +90,3 @@ public sealed record class Pessoa([Required] string Apelido, string Nome, DateOn
 [JsonSerializable(typeof(List<Pessoa>))]
 internal sealed partial class PessoaJsonContext : JsonSerializerContext { }
 
-//internal sealed class RinhaContext : DbContext
-//{
-//    public RinhaContext(DbContextOptions options) : base(options) => ChangeTracker.AutoDetectChangesEnabled = false;
-
-//    private static readonly Func<RinhaContext, IAsyncEnumerable<Pessoa>> getAll = EF.CompileAsyncQuery((RinhaContext context) => context.Pessoas);
-
-//    public IAsyncEnumerable<Pessoa> GetAll() => getAll(this);
-
-//    public required DbSet<Pessoa> Pessoas { get; set; }
-
-//    protected override void OnModelCreating(ModelBuilder modelBuilder)
-//    {
-//        modelBuilder
-//            .Entity<Pessoa>()
-//            .Property(x => x.Apelido)
-//            .HasMaxLength(32);
-//        modelBuilder
-//            .Entity<Pessoa>()
-//            .Property(x => x.Nome)
-//            .HasMaxLength(100);
-//    }
-//}

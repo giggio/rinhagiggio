@@ -62,8 +62,8 @@ public static partial class Logs
     [LoggerMessage(EventId = 21, Level = LogLevel.Error, Message = "When saving to Db expected {rowsExpected}, but got {rowsSaved}.")]
     public static partial void DbWrongRowCountOnInsert(this ILogger logger, int rowsExpected, int rowsSaved);
 
-    [LoggerMessage(EventId = 22, Level = LogLevel.Trace, Message = "Inserted {rowsCount} rows into database.")]
-    public static partial void DbInserted(this ILogger logger, int rowsCount);
+    [LoggerMessage(EventId = 22, Level = LogLevel.Trace, Message = "Inserted {rowsCount} rows into database. Details:\n{details}")]
+    public static partial void DbInserted(this ILogger logger, int rowsCount, string? details);
 
     [LoggerMessage(EventId = 23, Level = LogLevel.Trace, Message = "Pool of {typeName} rented an item, has {itemsCount} before renting.")]
     public static partial void PoolRentingItem(this ILogger logger, string typeName, int itemsCount);

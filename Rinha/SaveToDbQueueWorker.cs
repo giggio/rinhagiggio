@@ -32,11 +32,11 @@ internal sealed class SaveToDbQueueWorker : BackgroundService, IDisposable
         while (!stoppingToken.IsCancellationRequested)
         {
             var dequeueTask = taskQueue.DequeueAsync(new CancellationTokenSource(TimeSpan.FromSeconds(5)).Token);
-            List<Pessoa>? pessoas = null;
+            Pessoa[]? pessoas = null;
             if (dequeueTask.IsCompletedSuccessfully)
             {
                 pessoas = dequeueTask.Result;
-                logger.QueueReadSynchronously(pessoas.Count, taskQueue.QueuedItemsCount);
+                logger.QueueReadSynchronously(pessoas.Length, taskQueue.QueuedItemsCount);
                 if (--numberWaited <= -2)
                 {
                     numberWaited = 0;
@@ -49,7 +49,7 @@ internal sealed class SaveToDbQueueWorker : BackgroundService, IDisposable
                 {
                     pessoas = await dequeueTask;
                     Debug.Assert(pessoas.All(p => p is not null));
-                    logger.QueueReadAsynchronously(pessoas.Count, taskQueue.QueuedItemsCount);
+                    logger.QueueReadAsynchronously(pessoas.Length, taskQueue.QueuedItemsCount);
                 }
                 catch (OperationCanceledException) // timed out waiting for items to be produced
                 {
@@ -66,7 +66,7 @@ internal sealed class SaveToDbQueueWorker : BackgroundService, IDisposable
             {
                 try
                 {
-                    logger.SavingToDb(pessoas.Count);
+                    logger.SavingToDb(pessoas.Length);
                     await db.AddAsync(pessoas, stoppingToken);
                 }
                 catch (Exception ex)
@@ -82,7 +82,7 @@ internal sealed class SaveToDbQueueWorker : BackgroundService, IDisposable
 public interface IBackgroundTaskQueue
 {
     ValueTask QueueBackgroundWorkItemAsync(Pessoa pessoa, CancellationToken cancellationToken);
-    ValueTask<List<Pessoa>> DequeueAsync(CancellationToken cancellationToken);
+    ValueTask<Pessoa[]> DequeueAsync(CancellationToken cancellationToken);
     void IncreaseNumberOfItems();
     void DecreaseNumberOfItems();
     ValueTask<bool> FlushAsync(CancellationToken cancellationToken);
@@ -92,12 +92,12 @@ public interface IBackgroundTaskQueue
 
 public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
 {
-    private readonly Channel<List<Pessoa>> queue;
+    private readonly Channel<Pessoa[]> queue;
     private const int maxPowerOfItems = 8;
     private const int minPowerOfItems = 4;
     private int powerOfItens = minPowerOfItems;
     private int numberOfItems;
-    private readonly LockableList<Pessoa> pessoas = new();
+    private readonly NoBlockingList<Pessoa> pessoas = new();
     private readonly ILogger<NewPessoasBackgroundTaskQueue> logger;
 
     public NewPessoasBackgroundTaskQueue(ILogger<NewPessoasBackgroundTaskQueue> logger)
@@ -108,7 +108,7 @@ public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
             SingleReader = false,
             SingleWriter = false
         };
-        queue = Channel.CreateUnbounded<List<Pessoa>>(options);
+        queue = Channel.CreateUnbounded<Pessoa[]>(options);
         numberOfItems = (int)Math.Pow(2, powerOfItens);
         this.logger = logger;
         logger.BackgroundBatchNumber(numberOfItems);
@@ -138,10 +138,11 @@ public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
 
     public async ValueTask QueueBackgroundWorkItemAsync(Pessoa pessoa, CancellationToken cancellationToken)
     {
+        Debug.Assert(pessoa != null);
         logger.BufferingNewItem();
-        if (pessoas.TryAddAndGetAll(pessoa, numberOfItems, out var pessoasToQueue))
+        if (pessoas.AddAndTryGet(pessoa, numberOfItems, out var pessoasToQueue))
         {
-            logger.AddingItemsToQueue(pessoasToQueue!.Count);
+            logger.AddingItemsToQueue(pessoasToQueue.Length);
             Debug.Assert(pessoasToQueue.All(p => p is not null));
             await queue.Writer.WriteAsync(pessoasToQueue, cancellationToken);
         }
@@ -152,7 +153,8 @@ public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
 
         if (pessoas.TryGetAll(out var pessoasToQueue))
         {
-            logger.FlushingQueue(pessoasToQueue!.Count);
+            logger.FlushingQueue(pessoasToQueue.Length);
+            Debug.Assert(pessoasToQueue.All(p => p is not null));
             await queue.Writer.WriteAsync(pessoasToQueue, cancellationToken);
             return true;
         }
@@ -169,44 +171,8 @@ public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
         }
     }
 
-    public ValueTask<List<Pessoa>> DequeueAsync(CancellationToken cancellationToken) => queue.Reader.ReadAsync(cancellationToken);
+    public ValueTask<Pessoa[]> DequeueAsync(CancellationToken cancellationToken) => queue.Reader.ReadAsync(cancellationToken);
 
     public int QueuedItemsCount => queue.Reader.Count;
-
-    private sealed class LockableList<T>
-    {
-        private List<T> items = new();
-
-        public bool TryAddAndGetAll(T item, int maximum, out List<T>? thisItems)
-        {
-            lock (this)
-            {
-                if (items.Count >= maximum - 1)
-                {
-                    thisItems = items;
-                    thisItems.Add(item);
-                    items = new();
-                    return true;
-                }
-            }
-            items.Add(item);
-            thisItems = null;
-            return false;
-        }
-
-        public bool TryGetAll(out List<T>? thisItems)
-        {
-            lock (this)
-            {
-                if (items.Count > 0)
-                {
-                    thisItems = items;
-                    items = new();
-                    return true;
-                }
-            }
-            thisItems = null;
-            return false;
-        }
-    }
 }
+

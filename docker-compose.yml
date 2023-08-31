@@ -6,10 +6,9 @@ services:
     image: giggio/rinhabackend-2023-q3
     hostname: api1
     environment:
-      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=300;Maximum Pool Size=450;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
+      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=10;Maximum Pool Size=50;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
       - Cache__PeerAddress=http://api2:10000
       #- Logging__LogLevel__Default=Debug
-      - QueueCapacity=100
     depends_on:
       db:
         condition: service_healthy
@@ -21,7 +20,7 @@ services:
       resources:
         limits:
           cpus: '0.3'
-          memory: '384MB'
+          memory: '512MB'
     networks:
       - app-network
     healthcheck:
@@ -35,10 +34,9 @@ services:
     image: giggio/rinhabackend-2023-q3
     hostname: api2
     environment:
-      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=300;Maximum Pool Size=450;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
+      - ConnectionStrings__Rinha=Host=db;Database=rinha;Username=rinha;Password=rinha;Pooling=true;Minimum Pool Size=10;Maximum Pool Size=50;Multiplexing=true;Timeout=5;Command Timeout=5;Cancellation Timeout=-1;No Reset On Close=true
       - Cache__PeerAddress=http://api1:10000
       #- Logging__LogLevel__Default=Debug
-      - QueueCapacity=100
     depends_on:
       db:
         condition: service_healthy
@@ -50,7 +48,7 @@ services:
       resources:
         limits:
           cpus: '0.3'
-          memory: '384MB'
+          memory: '512MB'
     networks:
       - app-network
     healthcheck:
@@ -93,7 +91,7 @@ services:
       resources:
         limits:
           cpus: '0.85'
-          memory: '2176MB'
+          memory: '1920MB'
     networks:
       - app-network
     healthcheck:

@@ -76,13 +76,13 @@ public sealed class Db : IAsyncDisposable
         }
     }
 
-    public async Task AddAsync(List<Pessoa> pessoas, CancellationToken cancellationToken)
+    public async Task AddAsync(Pessoa[] pessoas, CancellationToken cancellationToken)
     {
         ThrowIfDisposed();
         await using var connectionsPoolItem = await connectionPool.RentAsync(cancellationToken);
         var connection = connectionsPoolItem.Value;
         Debug.Assert(connection.State == ConnectionState.Open);
-        var numberOfSteps = (int)Math.Ceiling((double)pessoas.Count / maxNumberOfPessoas);
+        var numberOfSteps = (int)Math.Ceiling((double)pessoas.Length / maxNumberOfPessoas);
         var step = 0;
         while (step < numberOfSteps)
         {
@@ -112,7 +112,11 @@ public sealed class Db : IAsyncDisposable
             if (rowCount != pessoasToInsert.Length)
                 logger.DbWrongRowCountOnInsert(rowCount, pessoasToInsert.Length);
             else
-                logger.DbInserted(pessoasToInsert.Length);
+#if DEBUG
+                logger.DbInserted(pessoasToInsert.Length, pessoas.Select(p => $"Id: {p.Id}, Apelido: {p.Apelido}").Aggregate("", (acc, value) => $"{acc}\n{value}"));
+#else
+                logger.DbInserted(pessoasToInsert.Length, null);
+#endif
         }
     }
 
@@ -245,7 +249,7 @@ public sealed class Pool<T> where T : class
     }
 }
 
-public class DbConfig
+public sealed class DbConfig
 {
     public int PoolSize
     {
