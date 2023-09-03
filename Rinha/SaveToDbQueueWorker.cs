@@ -3,7 +3,7 @@ using System.Threading.Channels;
 
 namespace Rinha;
 
-internal sealed class SaveToDbQueueWorker : BackgroundService, IDisposable
+internal sealed class SaveToDbQueueWorker : BackgroundService
 {
     private readonly ILogger<SaveToDbQueueWorker> logger;
     private readonly IBackgroundTaskQueue taskQueue;
@@ -93,7 +93,7 @@ public interface IBackgroundTaskQueue
 public sealed class NewPessoasBackgroundTaskQueue : IBackgroundTaskQueue
 {
     private readonly Channel<Pessoa[]> queue;
-    private const int maxPowerOfItems = 8;
+    private const int maxPowerOfItems = 9;
     private const int minPowerOfItems = 4;
     private int powerOfItens = minPowerOfItems;
     private int numberOfItems;

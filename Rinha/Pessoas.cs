@@ -1,5 +1,4 @@
 using Microsoft.AspNetCore.Http.HttpResults;
-using Microsoft.Extensions.Options;
 using System.ComponentModel.DataAnnotations;
 using System.Diagnostics;
 using System.Text.Json.Serialization;
@@ -8,7 +7,7 @@ namespace Rinha;
 
 public static class PessoasActions
 {
-    public static WebApplication MapPessoas(this WebApplication app)
+    public static WebApplication MapPessoas(this WebApplication app, bool isLeader)
     {
         var logger = app.Logger;
         app.MapPost("/pessoas", async ValueTask<Results<Created, UnprocessableEntity>> (IServiceProvider provider, CancellationToken cancellationToken, Pessoa pessoa) =>
@@ -27,8 +26,8 @@ public static class PessoasActions
 
             if (CacheData.Exists(pessoa.Apelido))
                 return TypedResults.UnprocessableEntity();
-            var cacheClient = provider.GetRequiredService<PeerCacheClient>();
-            await cacheClient.NotifyNewAsync(pessoa, cancellationToken);
+            var cacheQueue = provider.GetRequiredService<CacheQueue>();
+            await cacheQueue.EnqueueAsync(pessoa, cancellationToken);
             await CacheData.AddAsync(pessoa, cancellationToken);
             return TypedResults.Created($"/pessoas/{id}");
         })
@@ -59,11 +58,12 @@ public static class PessoasActions
 #endif
         ;
 
-        app.MapGet("/contagem-pessoas", async (IOptions<CacheOptions> cacheOptions, IBackgroundTaskQueue queue, PeerCacheClient cacheClient, Db db, CancellationToken cancellationToken) =>
+        RouteHandlerBuilder contagemPessoasMapBuilder;
+        if (isLeader)
         {
-            var cancellationTokenSource = new CancellationTokenSource(10_000);
-            if (cacheOptions.Value.Leader)
+            contagemPessoasMapBuilder = app.MapGet("/contagem-pessoas", async (IBackgroundTaskQueue queue, Db db, CancellationToken cancellationToken) =>
             {
+                var cancellationTokenSource = new CancellationTokenSource(10_000);
                 try
                 { await queue.FlushAsyncAndWaitToDrainAsync(cancellationTokenSource.Token); }
                 catch { }
@@ -73,21 +73,25 @@ public static class PessoasActions
                 Debug.Assert(cachedCount == countFromDb, $"Count from db: {countFromDb} != CachedCount: {cachedCount}");
 #endif
                 return countFromDb;
-            }
-            else
+            });
+        }
+        else
+        {
+            contagemPessoasMapBuilder = app.MapGet("/contagem-pessoas", async (IBackgroundTaskQueue queue, PeerCacheClient cacheClient, CancellationToken cancellationToken) =>
             {
+                var cancellationTokenSource = new CancellationTokenSource(10_000);
                 var countFromPeer = await cacheClient.CountAsync(cancellationToken);
 #if DEBUG
                 var cachedCount = CacheData.Count();
                 Debug.Assert(cachedCount == countFromPeer, $"Count from peer: {countFromPeer} != CachedCount: {cachedCount}");
 #endif
                 return countFromPeer;
-            }
-        })
+            });
+        }
 #if DEBUG
-        .WithName("Conta pessoa").WithOpenApi()
+        contagemPessoasMapBuilder.WithName("Conta pessoa").WithOpenApi();
 #endif
-        ;
+
         return app;
     }
 }

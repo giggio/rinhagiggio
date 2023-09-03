@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 
@@ -9,10 +9,12 @@ public sealed class NoBlockingList<T>
     private const int bufferSize = 1024;
     private readonly T[] items = new T[bufferSize];
 
-    // 32 bytes:
-    // |  |- lower bits: item index --|--------------- empty ------------|- higher bits: last index -|
-    // 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
-    // 00 01 01 01 01 01 01 01 01 01 01 00 00 00 00 00 00 00 00 00 00 00 01 01 01 01 01 01 01 01 01 01
+    /// <summary>
+    /// 32 bytes:
+    /// |  |- lower bits: item index --|--------------- empty ------------|- higher bits: last index -|
+    /// 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+    /// 00 01 01 01 01 01 01 01 01 01 01 00 00 00 00 00 00 00 00 00 00 00 01 01 01 01 01 01 01 01 01 01
+    /// </summary>
     private int indexAndCount;
 
     private (int newItemIndex, Range range1, Range range2, bool shouldReturnNewList) GetPositionAndLength(int maximumCount)

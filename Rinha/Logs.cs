@@ -17,10 +17,10 @@ public static partial class Logs
     [LoggerMessage(EventId = 5, Level = LogLevel.Warning, Message = "Background processer at a maximum, taking {items} items.")]
     public static partial void MaximumBackgroundBatchNumber(this ILogger logger, int items);
 
-    [LoggerMessage(EventId = 6, Level = LogLevel.Information, Message = "Background processer at a minimum, taking {items} items.")]
+    [LoggerMessage(EventId = 6, Level = LogLevel.Trace, Message = "Background processer at a minimum, taking {items} items.")]
     public static partial void MinimumBackgroundBatchNumber(this ILogger logger, int items);
 
-    [LoggerMessage(EventId = 7, Level = LogLevel.Information, Message = "Background processer is taking {items} items{optional}.")]
+    [LoggerMessage(EventId = 7, Level = LogLevel.Trace, Message = "Background processer is taking {items} items{optional}.")]
     public static partial void BackgroundBatchNumber(this ILogger logger, int items, string optional = "");
 
     [LoggerMessage(EventId = 8, Level = LogLevel.Information, Message = "No cache peer.")]
@@ -35,8 +35,8 @@ public static partial class Logs
     [LoggerMessage(EventId = 11, Level = LogLevel.Error, Message = "Http endpoint and/or Grpc endpoint not defined.")]
     public static partial void ServerAddressesNotFound(this ILogger logger);
 
-    [LoggerMessage(EventId = 12, Level = LogLevel.Error, Message = "Could not connect to peer cache ({message}), got exception:\n{exceptionMessage}.")]
-    public static partial void CacheDidNotRespond(this ILogger logger, string message, string exceptionMessage);
+    [LoggerMessage(EventId = 12, Level = LogLevel.Error, Message = "Could not connect to peer cache server ({message}).")]
+    public static partial void CacheServerDidNotRespond(this ILogger logger, string message, Exception ex);
 
     [LoggerMessage(EventId = 13, Level = LogLevel.Trace, Message = "Buffering new item.")]
     public static partial void BufferingNewItem(this ILogger logger);
@@ -71,20 +71,59 @@ public static partial class Logs
     [LoggerMessage(EventId = 24, Level = LogLevel.Trace, Message = "Pool of {typeName} returned an item, had {itemsCount} after return.")]
     public static partial void PoolReturnedItem(this ILogger logger, string typeName, int itemsCount);
 
-    [LoggerMessage(EventId = 25, Level = LogLevel.Information, Message = "Pool of {typeName} returning all items, had {itemsCount}.")]
+    [LoggerMessage(EventId = 25, Level = LogLevel.Trace, Message = "Pool of {typeName} returning all items, had {itemsCount}.")]
     public static partial void PoolReturningAllItems(this ILogger logger, string typeName, int itemsCount);
 
-    [LoggerMessage(EventId = 26, Level = LogLevel.Information, Message = "Pool of {typeName} created with {itemsCount}.")]
+    [LoggerMessage(EventId = 26, Level = LogLevel.Trace, Message = "Pool of {typeName} created with {itemsCount}.")]
     public static partial void PoolCreated(this ILogger logger, string typeName, int itemsCount);
 
     [LoggerMessage(EventId = 27, Level = LogLevel.Information, Message = "Is leader: {isLeader}.")]
     public static partial void IsLeader(this ILogger logger, bool isLeader);
 
-    [LoggerMessage(EventId = 28, Level = LogLevel.Debug, Message = "Got GRPC message to store pessoa for id {id}.")]
-    public static partial void CacheServerStorePessoa(this ILogger logger, string id);
+    [LoggerMessage(EventId = 28, Level = LogLevel.Trace, Message = "Got GRPC server message to store pessoa for id {id}.")]
+    public static partial void CacheServerReceivedPessoa(this ILogger logger, string id);
 
-    [LoggerMessage(EventId = 28, Level = LogLevel.Debug, Message = "Got GRPC message to get count for pessoas, answered with {count}.")]
+    [LoggerMessage(EventId = 29, Level = LogLevel.Error, Message = "Could not connect to peer cache, Grpc message was cancelled ({message}).")]
+    public static partial void CacheClientServerCancelled(this ILogger logger, string message, Exception ex);
+
+    [LoggerMessage(EventId = 30, Level = LogLevel.Error, Message = "Could not connect to peer cache client ({message}).")]
+    public static partial void CacheClientDidNotRespond(this ILogger logger, string message, Exception ex);
+
+    [LoggerMessage(EventId = 31, Level = LogLevel.Error, Message = "Could not connect to peer cache, Grpc message was cancelled ({message}).")]
+    public static partial void CacheServerClientCancelled(this ILogger logger, string message, Exception ex);
+
+    [LoggerMessage(EventId = 32, Level = LogLevel.Information, Message = "Cache server connected.")]
+    public static partial void CacheServerConnected(this ILogger logger);
+
+    [LoggerMessage(EventId = 33, Level = LogLevel.Information, Message = "Cache client connected.")]
+    public static partial void CacheClientConnected(this ILogger logger);
+
+    [LoggerMessage(EventId = 34, Level = LogLevel.Trace, Message = "Sending GRPC server message with pessoa with id {id}.")]
+    public static partial void CacheServerSendingPessoa(this ILogger logger, string id);
+
+    [LoggerMessage(EventId = 35, Level = LogLevel.Trace, Message = "Got GRPC client message to store pessoa for id {id}.")]
+    public static partial void CacheClientReceivedPessoa(this ILogger logger, string id);
+
+    [LoggerMessage(EventId = 36, Level = LogLevel.Trace, Message = "Sending GRPC client message with pessoa with id {id}.")]
+    public static partial void CacheClientSendingPessoa(this ILogger logger, string id);
+
+    [LoggerMessage(EventId = 37, Level = LogLevel.Information, Message = "Starting streaming worker.")]
+    public static partial void StreamingWorkerStarting(this ILogger logger);
+
+    [LoggerMessage(EventId = 38, Level = LogLevel.Error, Message = "Got error on streaming.")]
+    public static partial void StreamingWorkerError(this ILogger logger, Exception ex);
+
+    [LoggerMessage(EventId = 39, Level = LogLevel.Trace, Message = "Cache server operation cancelled.")]
+    public static partial void CacheServerOperationCancelled(this ILogger logger);
+
+    [LoggerMessage(EventId = 40, Level = LogLevel.Trace, Message = "Cache server operation cancelled.")]
+    public static partial void CacheClientOperationCancelled(this ILogger logger, Exception ex);
+
+    [LoggerMessage(EventId = 41, Level = LogLevel.Debug, Message = "Got GRPC message to get count for pessoas, answered with {count}.")]
     public static partial void CacheServerCount(this ILogger logger, int count);
+
+    [LoggerMessage(EventId = 42, Level = LogLevel.Trace, Message = "GRPC cache client cancelled ({message}).")]
+    public static partial void CacheClientClientCancelled(this ILogger logger, string message);
 }
 
 public sealed class AppLogs { }

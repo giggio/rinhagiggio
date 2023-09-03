@@ -1,41 +1,82 @@
 using Google.Protobuf;
 using Grpc.Core;
 using Grpc.Net.Client;
+using Grpc.Net.Client.Configuration;
 using Microsoft.Extensions.Options;
 using Nito.AsyncEx;
 using System.Diagnostics;
 using System.Net;
 using System.Runtime.InteropServices;
+using System.Threading.Channels;
 
 namespace Rinha;
 
 public sealed class CacheService : Cache.CacheBase
 {
-    public CacheService(Db db, ILogger<CacheService> logger)
-    {
-        this.db = db;
-        this.logger = logger;
-    }
-
-    private static readonly Empty empty = new();
-    private static readonly DateOnly unixEpoch = new(1970, 1, 1);
+    private readonly CancellationToken stoppingToken;
     private readonly Db db;
+    private readonly CacheQueue cacheQueue;
     private readonly ILogger logger;
 
-    public override async Task<Empty> StorePessoa(PessoaRequest pessoaRequest, ServerCallContext context)
+    public CacheService(Db db, IHostApplicationLifetime lifetime, CacheQueue cacheQueue, ILogger<CacheService> logger)
     {
-        var pessoa = new Pessoa(pessoaRequest.Apelido, pessoaRequest.Nome, unixEpoch.AddDays(pessoaRequest.Nascimento), pessoaRequest.StackNull ? null : new(pessoaRequest.Stack))
+        this.db = db;
+        this.cacheQueue = cacheQueue;
+        this.logger = logger;
+        stoppingToken = lifetime.ApplicationStopping;
+    }
+
+    public override async Task StorePessoa(IAsyncStreamReader<PessoaRequest> requestStream, IServerStreamWriter<PessoaRequest> responseStream, ServerCallContext context)
+    {
+        logger.CacheServerConnected();
+        var cancellationToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, context.CancellationToken).Token;
+        var responseStreamTask = Task.Run(async () =>
         {
-            Id = new Guid(pessoaRequest.Id.Memory.Span, false)
-        };
-        logger.CacheServerStorePessoa(pessoa.Id.ToString());
-        await CacheData.AddAsync(pessoa, context.CancellationToken);
-        return empty;
+            while (!cancellationToken.IsCancellationRequested) // todo: evaluate if we should stop writing to the response steam in other events, for example, if somehow the stream is closed
+            {
+                try
+                {
+                    var pessoa = await cacheQueue.DequeueAsync(cancellationToken);
+                    logger.CacheServerSendingPessoa(pessoa.Id.ToString());
+                    await responseStream.WriteAsync(pessoa.ToPessoaRequest(), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    logger.CacheServerOperationCancelled();
+                }
+                catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
+                {
+                    logger.CacheServerClientCancelled("StorePessoaServerResponseMessage", ex);
+                }
+                catch (Exception ex)
+                {
+                    logger.CacheClientDidNotRespond("StorePessoaServerResponseMessage", ex);
+                }
+            }
+        }, cancellationToken);
+        try
+        {
+            await foreach (var pessoaRequest in requestStream.ReadAllAsync<PessoaRequest>(cancellationToken))
+            {
+                var pessoa = pessoaRequest.ToPessoa();
+                logger.CacheServerReceivedPessoa(pessoa.Id.ToString());
+                await CacheData.AddAsync(pessoa, stoppingToken);
+            }
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
+        {
+            logger.CacheServerClientCancelled("StorePessoaServerRequestMessage", ex);
+        }
+        catch (Exception ex)
+        {
+            logger.CacheClientDidNotRespond("StorePessoaServerRequestMessage", ex);
+        }
+        await responseStreamTask;
     }
 
     public override async Task<CountResponse> CountPessoas(Empty _, ServerCallContext context)
     {
-        var count = await db.GetCountAsync(context.CancellationToken);
+        var count = await db.GetCountAsync(stoppingToken);
         logger.CacheServerCount(count);
         return new CountResponse { Count = count };
     }
@@ -49,12 +90,12 @@ public sealed class CacheOptions
 
 public sealed class PeerCacheClient : IDisposable
 {
-    private static readonly DateOnly unixEpoch = new(1970, 1, 1);
     private readonly GrpcChannel? channel;
-    private readonly Cache.CacheClient? client;
+    private readonly Cache.CacheClient? cacheClient;
+    private readonly CacheQueue cacheQueue;
     private readonly ILogger<PeerCacheClient> logger;
 
-    public PeerCacheClient(IOptions<CacheOptions> cacheOptions, ILogger<PeerCacheClient> logger)
+    public PeerCacheClient(IOptions<CacheOptions> cacheOptions, CacheQueue cacheQueue, ILogger<PeerCacheClient> logger)
     {
         if (cacheOptions.Value.PeerAddress is { } peerAddress)
         {
@@ -63,12 +104,29 @@ public sealed class PeerCacheClient : IDisposable
                 HttpClient = new HttpClient
                 {
                     DefaultRequestVersion = HttpVersion.Version20,
-                    DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact,
-                    Timeout = TimeSpan.FromSeconds(10),
+                    DefaultVersionPolicy = HttpVersionPolicy.RequestVersionExact
                 },
-                DisposeHttpClient = true
+                DisposeHttpClient = true,
+                ServiceConfig = new ServiceConfig
+                {
+                    MethodConfigs =
+                    {
+                        new MethodConfig
+                        {
+                            Names = { MethodName.Default },
+                            RetryPolicy = new RetryPolicy
+                            {
+                                MaxAttempts = 5,
+                                InitialBackoff = TimeSpan.FromSeconds(1),
+                                MaxBackoff = TimeSpan.FromSeconds(10),
+                                BackoffMultiplier = 1.5,
+                                RetryableStatusCodes = { StatusCode.Unavailable }
+                            }
+                        }
+                    }
+                }
             });
-            client = new Cache.CacheClient(channel);
+            cacheClient = new Cache.CacheClient(channel);
             logger.CachePeer(peerAddress);
         }
         else
@@ -76,31 +134,94 @@ public sealed class PeerCacheClient : IDisposable
             logger.NoCachePeer();
         }
 
+        this.cacheQueue = cacheQueue;
         this.logger = logger;
     }
 
-    public ValueTask NotifyNewAsync(Pessoa pessoa, CancellationToken cancellationToken) => client is not null ? NotifyNewImplAsync(pessoa, cancellationToken) : ValueTask.CompletedTask;
-
-    private async ValueTask NotifyNewImplAsync(Pessoa pessoa, CancellationToken cancellationToken)
+    public async ValueTask SendPessoasToPeerAsync(CancellationToken cancellationToken)
     {
-        PessoaRequest request = new()
+        if (cacheClient is null)
+            return;
+        while (!cancellationToken.IsCancellationRequested)
         {
-            Id = ByteString.CopyFrom(pessoa.Id.ToByteArray(false)),
-            Apelido = pessoa.Apelido,
-            Nome = pessoa.Nome,
-            Nascimento = pessoa.Nascimento.DayNumber - unixEpoch.DayNumber
-        };
-        if (pessoa.Stack is null)
-            request.StackNull = true;
-        else
-            request.Stack.AddRange(pessoa.Stack);
-        try
-        {
-            await client!.StorePessoaAsync(request, cancellationToken: cancellationToken);
-        }
-        catch (Exception ex)
-        {
-            logger.CacheDidNotRespond("StorePessoa", ex.ToString());
+            AsyncDuplexStreamingCall<PessoaRequest, PessoaRequest>? stream = null;
+            try
+            {
+                stream = cacheClient.StorePessoa(cancellationToken: cancellationToken);
+                logger.CacheClientConnected();
+            }
+            catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
+            {
+                if (cancellationToken.IsCancellationRequested)
+                    logger.CacheClientClientCancelled("StorePessoaStream");
+                else
+                    logger.CacheClientServerCancelled("StorePessoaStream", ex);
+            }
+            catch (Exception ex)
+            {
+                logger.CacheServerDidNotRespond("StorePessoaStream", ex);
+            }
+            if (stream is null)
+                continue;
+            var responseTask = Task.Run(async () =>
+            {
+                while (!cancellationToken.IsCancellationRequested) // todo: evaluate if we should stop listing to the response steam in other events, for example, if somehow the stream is closed
+                {
+                    try
+                    {
+                        await foreach (var pessoaRequest in stream.ResponseStream.ReadAllAsync(cancellationToken))
+                        {
+                            var pessoaFromResponse = pessoaRequest.ToPessoa();
+                            logger.CacheClientReceivedPessoa(pessoaFromResponse.Id.ToString());
+                            await CacheData.AddAsync(pessoaFromResponse, cancellationToken);
+                        }
+                    }
+                    catch (OperationCanceledException ex)
+                    {
+                        logger.CacheClientOperationCancelled(ex);
+                    }
+                    catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
+                    {
+                        if (cancellationToken.IsCancellationRequested)
+                            logger.CacheClientClientCancelled("StorePessoaClientResponseMessage");
+                        else
+                            logger.CacheClientServerCancelled("StorePessoaClientResponseMessage", ex);
+                    }
+                    catch (Exception ex)
+                    {
+                        logger.CacheServerDidNotRespond("StorePessoaClientResponseMessage", ex);
+                    }
+                }
+            }, CancellationToken.None);
+            while (!cancellationToken.IsCancellationRequested) // todo: evaluate if we should stop sending requests in other events, for example, if somehow the stream is closed
+            {
+                try
+                {
+                    var pessoa = await cacheQueue.DequeueAsync(cancellationToken);
+                    logger.CacheClientSendingPessoa(pessoa.Id.ToString());
+                    var request = pessoa.ToPessoaRequest();
+                    await stream.RequestStream.WriteAsync(request, cancellationToken);
+                }
+                catch (OperationCanceledException ex)
+                {
+                    logger.CacheClientOperationCancelled(ex);
+                }
+                catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
+                {
+                    if (cancellationToken.IsCancellationRequested)
+                        logger.CacheClientClientCancelled("StorePessoaClientRequestMessage");
+                    else
+                        logger.CacheClientServerCancelled("StorePessoaClientRequestMessage", ex);
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    logger.CacheServerDidNotRespond("StorePessoaClientRequestMessage", ex);
+                }
+            }
+            await Task.WhenAny(stream.RequestStream.CompleteAsync(), Task.Delay(3000, CancellationToken.None));
+            stream.Dispose();
+            await responseTask;
         }
     }
 
@@ -108,16 +229,69 @@ public sealed class PeerCacheClient : IDisposable
     {
         try
         {
-            return (await client!.CountPessoasAsync(new(), cancellationToken: cancellationToken)).Count;
+            return (await cacheClient!.CountPessoasAsync(new(), cancellationToken: cancellationToken, deadline: DateTime.UtcNow.AddSeconds(30))).Count;
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.Cancelled)
+        {
+            if (cancellationToken.IsCancellationRequested)
+                logger.CacheClientClientCancelled("Count");
+            else
+                logger.CacheClientServerCancelled("Count", ex);
+            throw;
         }
         catch (Exception ex)
         {
-            logger.CacheDidNotRespond("Count", ex.ToString());
+            logger.CacheServerDidNotRespond("Count", ex);
             throw;
         }
     }
 
     public void Dispose() => channel?.Dispose();
+}
+
+public sealed class CacheStreamingWorker : BackgroundService
+{
+    private readonly PeerCacheClient peerCacheClient;
+    private readonly ILogger<CacheStreamingWorker> logger;
+
+    public CacheStreamingWorker(PeerCacheClient peerCacheClient, ILogger<CacheStreamingWorker> logger)
+    {
+        this.peerCacheClient = peerCacheClient;
+        this.logger = logger;
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            logger.StreamingWorkerStarting();
+            try
+            {
+                await peerCacheClient.SendPessoasToPeerAsync(stoppingToken);
+            }
+            catch (Exception ex)
+            {
+                logger.StreamingWorkerError(ex);
+            }
+        }
+    }
+}
+
+public class CacheQueue
+{
+    private readonly Channel<Pessoa> queue = Channel.CreateUnbounded<Pessoa>(new UnboundedChannelOptions()
+    {
+        AllowSynchronousContinuations = false,
+        SingleReader = true,
+        SingleWriter = false
+    });
+
+    public ValueTask<Pessoa> DequeueAsync(CancellationToken cancellationToken) => queue.Reader.ReadAsync(cancellationToken);
+
+    public ValueTask EnqueueAsync(Pessoa pessoa, CancellationToken cancellationToken) => queue.Writer.WriteAsync(pessoa, cancellationToken);
+
+    public async ValueTask EnqueueAsync(List<Pessoa> pessoas, CancellationToken cancellationToken) =>
+        await Task.WhenAll(pessoas.Select(pessoa => queue.Writer.WriteAsync(pessoa, cancellationToken).AsTask()));
 }
 
 public static class CacheData
@@ -149,6 +323,12 @@ public static class CacheData
     /// <remarks>
     /// This is how this is working:
     ///
+    /// currently inserted: 0 (0)
+    /// last inserted: 40_005 (3)
+    /// take partial (start): 0
+    /// take full: 1, 2
+    /// take partial (end): 3
+    ///
     /// currently inserted: 40_003 (3)
     /// last inserted: 40_005 (3)
     /// take partial (start): 3
@@ -173,35 +353,33 @@ public static class CacheData
     /// take full: 4, 5
     /// take partial (end): 6
     /// </remarks>
-    /// <param name="id"></param>
-    /// <param name="cancellationToken"></param>
-    /// <returns></returns>
     public static async ValueTask<Pessoa?> GetPessoaAsync(Guid id, CancellationToken cancellationToken)
     {
         using (var _ = await asyncLockForPessoasWriter.WriterLockAsync(cancellationToken))
         {
             var currentCount = pessoasDictionary.Count;
-            var arrayCountForCurrent = (int)Math.Floor((double)currentCount / bufferSize);
             var pessoasCreated = numberOfPessoasCreated;
             if (currentCount != pessoasCreated)
             {
-                var arrayCountForLast = (int)Math.Floor((double)pessoasCreated / bufferSize);
-                var completeArraysCount = arrayCountForLast - arrayCountForCurrent - 1;
+                var arrayIndexForCurrent = (int)Math.Floor((double)currentCount / bufferSize);
+                var arrayIndexForLast = (int)Math.Floor((double)pessoasCreated / bufferSize);
+                var completeArraysCount = arrayIndexForLast - arrayIndexForCurrent - 1;
                 if (completeArraysCount <= 0)
                     completeArraysCount = 0;
-                var newPessoas = (arrayCountForCurrent == arrayCountForLast ? pessoas[arrayCountForCurrent].Skip(currentCount % bufferSize).Take((pessoasCreated % bufferSize) - (currentCount % bufferSize)).Where(p => p is not null) : pessoas[arrayCountForCurrent].Skip(currentCount % bufferSize))
-                    .Concat(pessoas.Skip(arrayCountForCurrent).Take(completeArraysCount).SelectMany(p => p))
-                    .Concat(arrayCountForCurrent == arrayCountForLast ? Array.Empty<Pessoa>() : pessoas.Last().Take(pessoasCreated % bufferSize).Where(p => p is not null));
+                var newPessoas = (arrayIndexForCurrent == arrayIndexForLast ? pessoas[arrayIndexForCurrent].Skip(currentCount % bufferSize).Take((pessoasCreated % bufferSize) - (currentCount % bufferSize)).Where(p => p is not null) : pessoas[arrayIndexForCurrent].Skip(currentCount % bufferSize))
+                    .Concat(pessoas.Skip(arrayIndexForCurrent + 1).Take(completeArraysCount).SelectMany(p => p))
+                    .Concat(arrayIndexForCurrent == arrayIndexForLast ? Array.Empty<Pessoa>() : pessoas.Last().Take(pessoasCreated % bufferSize).Where(p => p is not null));
                 foreach (var newPessoa in newPessoas)
                     pessoasDictionary.Add(newPessoa.Id, newPessoa);
             }
+            Debug.Assert(pessoasDictionary.Count == numberOfPessoasCreated);
         }
         return pessoasDictionary.GetValueOrDefault(id);
     }
 
     private static void AddToPessoas(Pessoa pessoa)
     {
-        var positionInPessoasArray = (int)Math.Floor((numberOfPessoasCreated + 100d) / bufferSize);
+        var positionInPessoasArray = (int)Math.Floor(((double)numberOfPessoasCreated) / bufferSize);
         if (pessoas.Count < positionInPessoasArray + 1)
         {
             lock (pessoas)
@@ -214,9 +392,9 @@ public static class CacheData
         pessoas[positionInPessoasArray][indexForNewPessoa] = pessoa;
     }
 
-    public static async ValueTask AddRangeAsync(IAsyncEnumerable<Pessoa> pessoasNovas, CancellationToken cancellationToken)
+    public static void AddRange(List<Pessoa> pessoasNovas)
     {
-        await foreach (var pessoa in pessoasNovas.WithCancellation(cancellationToken))
+        foreach (var pessoa in pessoasNovas)
         {
             Debug.Assert(pessoa != null);
             apelidos.Add(pessoa.Apelido);
@@ -265,3 +443,33 @@ public static class CacheData
         }
     }
 }
+
+public static class AsyncStreamReaderExtensions
+{
+    private static readonly DateOnly unixEpoch = new(1970, 1, 1);
+    public static PessoaRequest ToPessoaRequest(this Pessoa pessoa)
+    {
+        PessoaRequest request = new()
+        {
+            Id = ByteString.CopyFrom(pessoa.Id.ToByteArray(false)),
+            Apelido = pessoa.Apelido,
+            Nome = pessoa.Nome,
+            Nascimento = pessoa.Nascimento.DayNumber - unixEpoch.DayNumber
+        };
+        if (pessoa.Stack is null)
+            request.StackNull = true;
+        else
+            request.Stack.AddRange(pessoa.Stack);
+        return request;
+    }
+
+    public static Pessoa ToPessoa(this PessoaRequest pessoaRequest)
+    {
+        var pessoa = new Pessoa(pessoaRequest.Apelido, pessoaRequest.Nome, unixEpoch.AddDays(pessoaRequest.Nascimento), pessoaRequest.StackNull ? null : new(pessoaRequest.Stack))
+        {
+            Id = new Guid(pessoaRequest.Id.Memory.Span, false)
+        };
+        return pessoa;
+    }
+}
+
